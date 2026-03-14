@@ -54,6 +54,190 @@ from src.logging_config import setup_logging
 logger = logging.getLogger(__name__)
 
 
+# Tool alias mapping
+TOOL_ALIASES = {
+    # Data tools
+    'quote': 'get_realtime_quote',
+    'history': 'get_daily_history',
+    'chip': 'get_chip_distribution',
+    'context': 'get_analysis_context',
+    'info': 'get_stock_info',
+    # Analysis tools
+    'trend': 'analyze_trend',
+    'ma': 'calculate_ma',
+    'volume': 'get_volume_analysis',
+    'pattern': 'analyze_pattern',
+    # Market tools
+    'indices': 'get_market_indices',
+    'sectors': 'get_sector_rankings',
+    # Search tools
+    'news': 'search_stock_news',
+    'intel': 'search_comprehensive_intel',
+}
+
+
+def execute_single_tool(tool_alias: str, args: argparse.Namespace) -> dict:
+    """
+    Execute a single agent tool
+    
+    Args:
+        tool_alias: Tool alias (e.g., 'quote', 'ma', 'trend')
+        args: Command line arguments
+        
+    Returns:
+        Tool execution result (dict format)
+    """
+    # Map alias to full tool name
+    tool_name = TOOL_ALIASES.get(tool_alias)
+    if tool_name is None:
+        return {"error": f"Unknown tool alias: {tool_alias}"}
+    
+    # Get stock code from --stocks parameter (support single code only for tools)
+    stock_code = None
+    if args.stocks:
+        stock_code = args.stocks.split(',')[0].strip()
+    
+    # Tools that require historical data in database
+    TOOLS_NEED_DB_DATA = ['analyze_trend', 'get_analysis_context']
+    
+    # Auto-fetch and save data for tools that need it
+    if tool_name in TOOLS_NEED_DB_DATA and stock_code:
+        logger.info(f"[Tool] {tool_name} requires historical data, fetching for {stock_code}...")
+        try:
+            from data_provider import DataFetcherManager
+            from src.storage import get_db
+            
+            manager = DataFetcherManager()
+            db = get_db()
+            
+            # Fetch historical data
+            df, source = manager.get_daily_data(stock_code, days=120)
+            if df is not None and not df.empty:
+                # Save to database
+                saved_count = db.save_daily_data(df, stock_code, source)
+                logger.info(f"[Tool] Saved {saved_count} new records for {stock_code} from {source}")
+                
+                # For analyze_trend, also prepare raw_data in context
+                if tool_name == "analyze_trend":
+                    # Get context and add raw_data
+                    context = db.get_analysis_context(stock_code)
+                    if context:
+                        # Get recent data from DB and convert to list of dicts
+                        recent_records = db.get_latest_data(stock_code, days=120)
+                        if recent_records:
+                            raw_data = [rec.to_dict() for rec in recent_records]
+                            context['raw_data'] = raw_data
+                            logger.info(f"[Tool] Prepared {len(raw_data)} days of raw_data for trend analysis")
+            else:
+                logger.warning(f"[Tool] Failed to fetch data for {stock_code}")
+        except Exception as e:
+            logger.error(f"[Tool] Error fetching data for {stock_code}: {e}")
+    
+    # ============================================================
+    # Data Tools
+    # ============================================================
+    
+    if tool_name == "get_realtime_quote":
+        if not stock_code:
+            return {"error": "Missing required parameter: --stocks"}
+        from src.agent.tools.data_tools import _handle_get_realtime_quote
+        return _handle_get_realtime_quote(stock_code)
+    
+    elif tool_name == "get_daily_history":
+        if not stock_code:
+            return {"error": "Missing required parameter: --stocks"}
+        from src.agent.tools.data_tools import _handle_get_daily_history
+        days = args.days if args.days else 60
+        return _handle_get_daily_history(stock_code, days)
+    
+    elif tool_name == "get_chip_distribution":
+        if not stock_code:
+            return {"error": "Missing required parameter: --stocks"}
+        from src.agent.tools.data_tools import _handle_get_chip_distribution
+        return _handle_get_chip_distribution(stock_code)
+    
+    elif tool_name == "get_analysis_context":
+        if not stock_code:
+            return {"error": "Missing required parameter: --stocks"}
+        from src.agent.tools.data_tools import _handle_get_analysis_context
+        return _handle_get_analysis_context(stock_code)
+    
+    elif tool_name == "get_stock_info":
+        if not stock_code:
+            return {"error": "Missing required parameter: --stocks"}
+        from src.agent.tools.data_tools import _handle_get_stock_info
+        return _handle_get_stock_info(stock_code)
+    
+    # ============================================================
+    # Analysis Tools
+    # ============================================================
+    
+    elif tool_name == "analyze_trend":
+        if not stock_code:
+            return {"error": "Missing required parameter: --stocks"}
+        from src.agent.tools.analysis_tools import _handle_analyze_trend
+        return _handle_analyze_trend(stock_code)
+    
+    elif tool_name == "calculate_ma":
+        if not stock_code:
+            return {"error": "Missing required parameter: --stocks"}
+        from src.agent.tools.analysis_tools import _handle_calculate_ma
+        periods = args.periods if args.periods else None
+        days = args.days if args.days else 120
+        return _handle_calculate_ma(stock_code, periods, days)
+    
+    elif tool_name == "get_volume_analysis":
+        if not stock_code:
+            return {"error": "Missing required parameter: --stocks"}
+        from src.agent.tools.analysis_tools import _handle_get_volume_analysis
+        days = args.days if args.days else 30
+        return _handle_get_volume_analysis(stock_code, days)
+    
+    elif tool_name == "analyze_pattern":
+        if not stock_code:
+            return {"error": "Missing required parameter: --stocks"}
+        from src.agent.tools.analysis_tools import _handle_analyze_pattern
+        days = args.days if args.days else 60
+        return _handle_analyze_pattern(stock_code, days)
+    
+    # ============================================================
+    # Market Tools
+    # ============================================================
+    
+    elif tool_name == "get_market_indices":
+        from src.agent.tools.market_tools import _handle_get_market_indices
+        region = args.region if args.region else "cn"
+        return _handle_get_market_indices(region)
+    
+    elif tool_name == "get_sector_rankings":
+        from src.agent.tools.market_tools import _handle_get_sector_rankings
+        top_n = args.top_n if hasattr(args, 'top_n') and args.top_n else 10
+        return _handle_get_sector_rankings(top_n)
+    
+    # ============================================================
+    # Search Tools
+    # ============================================================
+    
+    elif tool_name == "search_stock_news":
+        if not stock_code:
+            return {"error": "Missing required parameter: --stocks"}
+        if not args.name:
+            return {"error": "Missing required parameter: --name"}
+        from src.agent.tools.search_tools import _handle_search_stock_news
+        return _handle_search_stock_news(stock_code, args.name)
+    
+    elif tool_name == "search_comprehensive_intel":
+        if not stock_code:
+            return {"error": "Missing required parameter: --stocks"}
+        if not args.name:
+            return {"error": "Missing required parameter: --name"}
+        from src.agent.tools.search_tools import _handle_search_comprehensive_intel
+        return _handle_search_comprehensive_intel(stock_code, args.name)
+    
+    else:
+        return {"error": f"Unknown tool: {tool_name}"}
+
+
 def parse_arguments() -> argparse.Namespace:
     """解析命令行参数"""
     parser = argparse.ArgumentParser(
@@ -208,6 +392,64 @@ def parse_arguments() -> argparse.Namespace:
         '--backtest-force',
         action='store_true',
         help='强制回测（即使已有回测结果也重新计算）'
+    )
+
+    # === Tool Execution ===
+    parser.add_argument(
+        '--tool',
+        type=str,
+        choices=[
+            # Data tools
+            'quote', 'history', 'chip', 'context', 'info',
+            # Analysis tools
+            'trend', 'ma', 'volume', 'pattern',
+            # Market tools
+            'indices', 'sectors',
+            # Search tools
+            'news', 'intel',
+        ],
+        help='执行单个 Agent 工具'
+    )
+
+    parser.add_argument(
+        '--name',
+        type=str,
+        help='股票名称（用于搜索工具）'
+    )
+
+    parser.add_argument(
+        '--region',
+        type=str,
+        choices=['cn', 'us'],
+        default='cn',
+        help='市场区域（用于市场指数查询，默认 cn）'
+    )
+
+    parser.add_argument(
+        '--periods',
+        type=str,
+        help='均线周期，逗号分隔，如 "5,10,20,60"（用于均线计算）'
+    )
+
+    parser.add_argument(
+        '--days',
+        type=int,
+        help='天数参数（用于历史数据、量能分析、形态识别等）'
+    )
+
+    parser.add_argument(
+        '--top-n',
+        type=int,
+        default=10,
+        help='返回数量（用于板块排名，默认 10）'
+    )
+
+    parser.add_argument(
+        '--output-format',
+        type=str,
+        choices=['json', 'text', 'table'],
+        default='json',
+        help='输出格式（默认 json）'
     )
 
     return parser.parse_args()
@@ -521,6 +763,48 @@ def main() -> int:
     logger.info("A股自选股智能分析系统 启动")
     logger.info(f"运行时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     logger.info("=" * 60)
+
+    # ============================================================
+    # Mode 0: Single Tool Execution (NEW)
+    # ============================================================
+    if args.tool:
+        logger.info(f"模式: 单工具执行 ({args.tool})")
+        
+        # Execute tool
+        result = execute_single_tool(args.tool, args)
+        
+        # Output result
+        output_format = getattr(args, 'output_format', 'json')
+        
+        if output_format == "json":
+            import json
+            print(json.dumps(result, ensure_ascii=False, indent=2))
+        elif output_format == "text":
+            # Simple text format
+            if "error" in result:
+                print(f"Error: {result['error']}")
+            else:
+                for key, value in result.items():
+                    print(f"{key}: {value}")
+        elif output_format == "table":
+            # Table format (use tabulate or simple implementation)
+            try:
+                from tabulate import tabulate
+                if isinstance(result, dict) and not result.get("error"):
+                    print(tabulate(result.items(), headers=["Field", "Value"], tablefmt="grid"))
+                else:
+                    print(result)
+            except ImportError:
+                # Fallback to text format
+                logger.warning("tabulate not installed, falling back to text format")
+                for key, value in result.items():
+                    print(f"{key}: {value}")
+        
+        return 0 if "error" not in result else 1
+
+    # ============================================================
+    # Continue with existing modes
+    # ============================================================
 
     # 验证配置
     warnings = config.validate()

@@ -18,20 +18,28 @@ def _handle_analyze_trend(stock_code: str) -> dict:
     """Run technical trend analysis on a stock."""
     from src.stock_analyzer import StockTrendAnalyzer
     from src.storage import get_db
+    import pandas as pd
 
     db = get_db()
     analyzer = StockTrendAnalyzer()
 
-    # Fetch raw data from DB context
+    # Try to fetch raw data from DB context first
     context = db.get_analysis_context(stock_code)
+    
+    # If context doesn't have raw_data, fetch directly from database
     if context is None or "raw_data" not in context:
-        return {"error": f"No historical data available for trend analysis on {stock_code}"}
+        # Fetch historical data directly from database
+        recent_records = db.get_latest_data(stock_code, days=120)
+        if not recent_records or len(recent_records) < 5:
+            return {"error": f"No historical data available for trend analysis on {stock_code}"}
+        
+        # Convert to list of dicts
+        raw_data = [rec.to_dict() for rec in recent_records]
+    else:
+        raw_data = context["raw_data"]
+        if not isinstance(raw_data, list) or len(raw_data) < 5:
+            return {"error": f"Insufficient data for trend analysis on {stock_code} (need >= 5 days)"}
 
-    raw_data = context["raw_data"]
-    if not isinstance(raw_data, list) or len(raw_data) < 5:
-        return {"error": f"Insufficient data for trend analysis on {stock_code} (need >= 5 days)"}
-
-    import pandas as pd
     df = pd.DataFrame(raw_data)
 
     result = analyzer.analyze(df, stock_code)

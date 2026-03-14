@@ -417,6 +417,10 @@ class DatabaseManager:
             db_url,
             echo=False,  # 设为 True 可查看 SQL 语句
             pool_pre_ping=True,  # 连接健康检查
+            connect_args={
+                "check_same_thread": False,  # 允许多线程访问
+                "timeout": 30,  # 锁等待超时 30 秒
+            }
         )
         
         # 创建 Session 工厂
@@ -428,12 +432,40 @@ class DatabaseManager:
         
         # 创建所有表
         Base.metadata.create_all(self._engine)
+        
+        # 启用 WAL 模式（提升并发性能）
+        self._enable_wal_mode()
 
         self._initialized = True
         logger.info(f"数据库初始化完成: {db_url}")
 
         # 注册退出钩子，确保程序退出时关闭数据库连接
         atexit.register(DatabaseManager._cleanup_engine, self._engine)
+    
+    def _enable_wal_mode(self) -> None:
+        """
+        Enable WAL (Write-Ahead Logging) mode for better concurrency.
+        
+        WAL mode allows multiple readers and one writer to access the database
+        concurrently without blocking each other.
+        """
+        try:
+            from sqlalchemy import text
+            with self._engine.connect() as conn:
+                # Enable WAL mode
+                result = conn.execute(text("PRAGMA journal_mode=WAL"))
+                mode = result.fetchone()[0]
+                logger.info(f"SQLite journal mode: {mode}")
+                
+                # Set synchronous mode (NORMAL is faster than FULL but still safe)
+                conn.execute(text("PRAGMA synchronous=NORMAL"))
+                
+                # Set busy timeout (milliseconds)
+                conn.execute(text("PRAGMA busy_timeout=30000"))
+                
+                conn.commit()
+        except Exception as e:
+            logger.warning(f"Failed to enable WAL mode: {e}")
     
     @classmethod
     def get_instance(cls) -> 'DatabaseManager':
@@ -496,6 +528,46 @@ class DatabaseManager:
         try:
             yield session
             session.commit()
+        except Exception:
+            session.rollback()
+            raise
+        finally:
+            session.close()
+    
+    @contextmanager
+    def session_scope_with_retry(self, max_retries: int = 3):
+        """
+        Provide a transactional scope with retry on database locked errors.
+        
+        Args:
+            max_retries: Maximum number of retry attempts
+            
+        Yields:
+            Session object
+        """
+        import time
+        from sqlalchemy.exc import OperationalError
+        
+        session = self.get_session()
+        try:
+            yield session
+            # Retry on commit
+            for attempt in range(max_retries):
+                try:
+                    session.commit()
+                    break
+                except OperationalError as e:
+                    if "database is locked" in str(e).lower():
+                        session.rollback()
+                        if attempt < max_retries - 1:
+                            wait_time = 0.5 * (2 ** attempt)  # Exponential backoff
+                            logger.warning(f"Database locked, retry {attempt + 1}/{max_retries} after {wait_time}s")
+                            time.sleep(wait_time)
+                        else:
+                            logger.error("Database locked after max retries")
+                            raise
+                    else:
+                        raise
         except Exception:
             session.rollback()
             raise
