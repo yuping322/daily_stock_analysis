@@ -408,7 +408,39 @@ def parse_arguments() -> argparse.Namespace:
             # Search tools
             'news', 'intel',
         ],
-        help='执行单个 Agent 工具'
+        help=(
+            '执行单个 Agent 工具，直接输出结构化结果（默认 JSON）。\n'
+            '\n'
+            '数据工具（需要 --stocks）:\n'
+            '  quote    实时行情\n'
+            '  history  历史K线  [--days N，默认60]\n'
+            '  chip     筹码分布\n'
+            '  context  分析上下文（自动拉取历史数据）\n'
+            '  info     股票基本面信息\n'
+            '\n'
+            '分析工具（需要 --stocks）:\n'
+            '  trend    技术趋势分析（自动拉取历史数据）\n'
+            '  ma       均线计算  [--periods 5,10,20,60] [--days N，默认120]\n'
+            '  volume   量能分析  [--days N，默认30]\n'
+            '  pattern  形态识别  [--days N，默认60]\n'
+            '\n'
+            '市场工具（无需 --stocks）:\n'
+            '  indices  市场指数  [--region cn|us，默认cn]\n'
+            '  sectors  板块排名  [--top-n N，默认10]\n'
+            '\n'
+            '搜索工具（需要 --stocks 和 --name）:\n'
+            '  news     股票新闻搜索\n'
+            '  intel    综合情报搜索\n'
+            '\n'
+            '示例:\n'
+            '  python main.py --tool quote   --stocks 600519\n'
+            '  python main.py --tool trend   --stocks 600519 --output-format json\n'
+            '  python main.py --tool ma      --stocks 600519 --periods 5,10,20,60\n'
+            '  python main.py --tool volume  --stocks 600519 --days 30\n'
+            '  python main.py --tool indices --region cn\n'
+            '  python main.py --tool sectors --top-n 5\n'
+            '  python main.py --tool news    --stocks 600519 --name 贵州茅台\n'
+        )
     )
 
     parser.add_argument(
@@ -778,7 +810,16 @@ def main() -> int:
         
         if output_format == "json":
             import json
-            print(json.dumps(result, ensure_ascii=False, indent=2))
+            import datetime as _dt
+
+            class _DateEncoder(json.JSONEncoder):
+                """JSON encoder that handles date/datetime objects."""
+                def default(self, o):
+                    if isinstance(o, (_dt.date, _dt.datetime)):
+                        return o.isoformat()
+                    return super().default(o)
+
+            print(json.dumps(result, ensure_ascii=False, indent=2, cls=_DateEncoder))
         elif output_format == "text":
             # Simple text format
             if "error" in result:
