@@ -135,8 +135,13 @@ class PytdxFetcher(BaseFetcher):
         self._api = None
         self._connected = False
         self._current_host_idx = 0
-        self._stock_list_cache = None  # 股票列表缓存
-        self._stock_name_cache = {}    # 股票名称缓存 {code: name}
+        self._stock_list_cache = None  # stock list cache
+        self._stock_name_cache = {}    # stock name cache {code: name}
+        # Track connection failure to avoid retrying all hosts on every call.
+        # _unavailable_until: timestamp after which we retry; 0 means available.
+        self._unavailable_until: float = 0.0
+        # Cool-down period (seconds) after all hosts fail before retrying.
+        self._unavailable_cooldown: int = 300
     
     def _get_pytdx(self):
         """
@@ -168,12 +173,17 @@ class PytdxFetcher(BaseFetcher):
         TdxHq_API = self._get_pytdx()
         if TdxHq_API is None:
             raise DataFetchError("pytdx 库未安装")
-        
+
+        # Fast-fail: skip all hosts if we recently failed to connect.
+        import time as _time
+        if self._unavailable_until and _time.monotonic() < self._unavailable_until:
+            raise DataFetchError("Pytdx 无法连接任何服务器")
+
         api = TdxHq_API()
         connected = False
         
         try:
-            # 尝试连接服务器（自动选择最优）
+            # Try each host in round-robin order.
             for i in range(len(self._hosts)):
                 host_idx = (self._current_host_idx + i) % len(self._hosts)
                 host, port = self._hosts[host_idx]
@@ -182,6 +192,7 @@ class PytdxFetcher(BaseFetcher):
                     if api.connect(host, port, time_out=5):
                         connected = True
                         self._current_host_idx = host_idx
+                        self._unavailable_until = 0.0  # reset on success
                         logger.debug(f"Pytdx 连接成功: {host}:{port}")
                         break
                 except Exception as e:
@@ -189,6 +200,8 @@ class PytdxFetcher(BaseFetcher):
                     continue
             
             if not connected:
+                # Mark as unavailable for cooldown period to avoid blocking on next call.
+                self._unavailable_until = _time.monotonic() + self._unavailable_cooldown
                 raise DataFetchError("Pytdx 无法连接任何服务器")
             
             yield api
