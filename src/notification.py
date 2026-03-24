@@ -16,8 +16,9 @@ A股自选股智能分析系统 - 通知层
 """
 import logging
 from datetime import datetime
-from typing import List, Dict, Any, Optional
 from enum import Enum
+from pathlib import Path
+from typing import List, Dict, Any, Optional
 
 from src.config import get_config
 from src.analyzer import AnalysisResult
@@ -111,7 +112,12 @@ class NotificationService(
     注意：所有已配置的渠道都会收到推送
     """
     
-    def __init__(self, source_message: Optional[BotMessage] = None):
+    def __init__(
+        self,
+        source_message: Optional[BotMessage] = None,
+        report_output_dir: Optional[str] = None,
+        report_output_file: Optional[str] = None,
+    ):
         """
         初始化通知服务
         
@@ -120,6 +126,9 @@ class NotificationService(
         config = get_config()
         self._source_message = source_message
         self._context_channels: List[str] = []
+        self._report_output_dir = Path(report_output_dir).expanduser() if report_output_dir else None
+        self._report_output_file = Path(report_output_file).expanduser() if report_output_file else None
+        self._report_output_file_consumed = False
 
         # Markdown 转图片（Issue #289）
         self._markdown_to_image_channels = set(
@@ -1488,9 +1497,35 @@ class NotificationService(
         logger.info(f"通知发送完成：成功 {success_count} 个，失败 {fail_count} 个")
         return success_count > 0 or context_success
    
+    def _default_report_dir(self) -> Path:
+        """Return the default local report directory."""
+        return Path(__file__).parent.parent / 'reports'
+
+    def _derive_additional_report_path(self, filename: str) -> Path:
+        """Derive a sibling file path for additional reports when output_file is already used."""
+        assert self._report_output_file is not None
+        base = self._report_output_file
+        derived_name = f"{base.stem}_{Path(filename).stem}{Path(filename).suffix}"
+        return base.with_name(derived_name)
+
+    def _resolve_report_output_path(self, filename: str) -> tuple[Path, bool]:
+        """Resolve destination path for report output."""
+        safe_filename = Path(filename).name
+
+        if self._report_output_dir is not None:
+            return self._report_output_dir / safe_filename, False
+
+        if self._report_output_file is not None:
+            if not self._report_output_file_consumed:
+                self._report_output_file_consumed = True
+                return self._report_output_file, False
+            return self._derive_additional_report_path(safe_filename), True
+
+        return self._default_report_dir() / safe_filename, False
+
     def save_report_to_file(
-        self, 
-        content: str, 
+        self,
+        content: str,
         filename: Optional[str] = None
     ) -> str:
         """
@@ -1503,22 +1538,18 @@ class NotificationService(
         Returns:
             保存的文件路径
         """
-        from pathlib import Path
-        
         if filename is None:
             date_str = datetime.now().strftime('%Y%m%d')
             filename = f"report_{date_str}.md"
-        
-        # 确保 reports 目录存在（使用项目根目录下的 reports）
-        reports_dir = Path(__file__).parent.parent / 'reports'
-        reports_dir.mkdir(parents=True, exist_ok=True)
-        
-        filepath = reports_dir / filename
-        
-        with open(filepath, 'w', encoding='utf-8') as f:
-            f.write(content)
-        
-        logger.info(f"日报已保存到: {filepath}")
+
+        filepath, derived_from_output_file = self._resolve_report_output_path(filename)
+        filepath.parent.mkdir(parents=True, exist_ok=True)
+        filepath.write_text(content, encoding='utf-8')
+
+        if derived_from_output_file:
+            logger.info(f"检测到多个报告输出，附加报告已保存到: {filepath}")
+        else:
+            logger.info(f"日报已保存到: {filepath}")
         return str(filepath)
 
 

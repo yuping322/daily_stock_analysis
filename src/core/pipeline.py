@@ -54,7 +54,9 @@ class StockAnalysisPipeline:
         source_message: Optional[BotMessage] = None,
         query_id: Optional[str] = None,
         query_source: Optional[str] = None,
-        save_context_snapshot: Optional[bool] = None
+        save_context_snapshot: Optional[bool] = None,
+        report_output_dir: Optional[str] = None,
+        report_output_file: Optional[str] = None,
     ):
         """
         初始化调度器
@@ -62,6 +64,8 @@ class StockAnalysisPipeline:
         Args:
             config: 配置对象（可选，默认使用全局配置）
             max_workers: 最大并发线程数（可选，默认从配置读取）
+            report_output_dir: 自定义报告输出目录
+            report_output_file: 自定义主报告输出文件路径
         """
         self.config = config or get_config()
         self.max_workers = max_workers or self.config.max_workers
@@ -78,7 +82,11 @@ class StockAnalysisPipeline:
         # 不再单独创建 akshare_fetcher，统一使用 fetcher_manager 获取增强数据
         self.trend_analyzer = StockTrendAnalyzer()  # 趋势分析器
         self.analyzer = GeminiAnalyzer()
-        self.notifier = NotificationService(source_message=source_message)
+        self.notifier = NotificationService(
+            source_message=source_message,
+            report_output_dir=report_output_dir,
+            report_output_file=report_output_file,
+        )
         
         # 初始化搜索服务
         self.search_service = SearchService(

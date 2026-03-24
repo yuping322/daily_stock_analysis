@@ -16,7 +16,9 @@ TODO:
 """
 import os
 import sys
+import tempfile
 import unittest
+from pathlib import Path
 from unittest import mock
 from typing import Optional
 
@@ -348,6 +350,42 @@ class TestNotificationServiceSendToMethods(unittest.TestCase):
 
         self.assertTrue(ok)
         self.assertAlmostEqual(mock_post.call_count, 4, delta=1)
+
+
+class TestNotificationServiceReportOutputPaths(unittest.TestCase):
+    """Test report output path overrides for NotificationService."""
+
+    @mock.patch("src.notification.get_config")
+    def test_save_report_to_custom_output_dir(self, mock_get_config: mock.MagicMock):
+        mock_get_config.return_value = _make_config()
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            service = NotificationService(report_output_dir=temp_dir)
+            output_path = service.save_report_to_file("hello", "daily.md")
+
+            expected_path = Path(temp_dir) / "daily.md"
+            self.assertEqual(Path(output_path), expected_path)
+            self.assertTrue(expected_path.exists())
+            self.assertEqual(expected_path.read_text(encoding="utf-8"), "hello")
+
+    @mock.patch("src.notification.get_config")
+    def test_save_report_to_custom_output_file_derives_additional_report_path(
+        self, mock_get_config: mock.MagicMock
+    ):
+        mock_get_config.return_value = _make_config()
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            primary_path = Path(temp_dir) / "custom.md"
+            service = NotificationService(report_output_file=str(primary_path))
+
+            first_output = service.save_report_to_file("primary")
+            second_output = service.save_report_to_file("secondary", "market_review_20260324.md")
+
+            expected_second_path = Path(temp_dir) / "custom_market_review_20260324.md"
+            self.assertEqual(Path(first_output), primary_path)
+            self.assertEqual(primary_path.read_text(encoding="utf-8"), "primary")
+            self.assertEqual(Path(second_output), expected_second_path)
+            self.assertEqual(expected_second_path.read_text(encoding="utf-8"), "secondary")
 
 
 if __name__ == "__main__":

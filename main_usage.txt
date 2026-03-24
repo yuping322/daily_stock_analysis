@@ -1,0 +1,427 @@
+================================================================
+main.py 完整用法参考手册
+================================================================
+
+----------------------------------------------------------------
+一、参数总览
+----------------------------------------------------------------
+
+基础控制:
+  --debug                   启用调试模式，输出详细日志
+  --dry-run                 仅获取数据并保存到数据库，跳过 AI 分析和报告
+  --stocks CODE[,CODE...]   指定股票代码（逗号分隔），覆盖配置文件
+  --no-notify               不发送推送通知（Telegram/企微等）
+  --single-notify           每分析完一只股票立即推送，而非汇总推送
+  --workers N               并发线程数（默认使用配置文件值）
+  --force-run               跳过交易日检查，强制执行
+
+服务模式:
+  --serve                   启动 FastAPI 后端服务，同时执行分析
+  --serve-only              仅启动 FastAPI 后端服务，不自动执行分析
+  --webui                   同 --serve（别名）
+  --webui-only              同 --serve-only（别名）
+  --host HOST               服务监听地址（默认 0.0.0.0）
+  --port PORT               服务端口（默认 8000）
+
+分析控制:
+  --market-review           仅运行大盘复盘分析
+  --no-market-review        跳过大盘复盘，只做个股分析
+  --no-context-snapshot     不保存分析上下文快照
+  --schedule                启用定时任务模式（每日定时执行）
+  --no-run-immediately      定时任务启动时不立即执行一次
+
+回测:
+  --backtest                运行回测（对历史分析结果评估）
+  --backtest-code CODE      仅回测指定股票
+  --backtest-days N         回测评估窗口（交易日数）
+  --backtest-force          强制重新计算（忽略已有回测结果）
+
+单工具执行:
+  --tool TOOL               执行单个 Agent 工具（见下方工具列表）
+  --stocks CODE             工具目标股票代码（单只）
+  --name NAME               股票名称（news/intel 工具必填）
+  --region {cn,us}          市场区域（indices 工具用，默认 cn）
+  --periods 5,10,20         均线周期（ma 工具用，逗号分隔）
+  --days N                  历史天数（history/volume/pattern/ma 工具用）
+  --top-n N                 返回数量（sectors 工具用，默认 10）
+  --output-format {json,text,table}  输出格式（默认 json）
+
+工具名称速查:
+  quote     实时行情          history   历史K线
+  chip      筹码分布          context   分析上下文
+  info      股票基本面         trend     技术趋势分析
+  ma        均线计算          volume    量能分析
+  pattern   形态识别          indices   市场指数
+  sectors   板块排名          news      股票新闻搜索
+  intel     综合情报搜索
+
+
+================================================================
+二、常规分析模式
+================================================================
+
+# 最简运行（分析配置文件中所有股票）
+python main.py
+
+# 调试模式（输出详细日志）
+python main.py --debug
+
+# 分析指定股票
+python main.py --stocks 600519
+python main.py --stocks 600519,000001,000002
+
+# 分析指定股票 + 调试
+python main.py --stocks 600519 --debug
+
+# 不发送通知
+python main.py --no-notify
+python main.py --stocks 600519 --no-notify
+
+# 每分析完一只立即推送
+python main.py --single-notify
+python main.py --stocks 600519,000001 --single-notify
+
+# 指定并发线程数
+python main.py --workers 4
+python main.py --stocks 600519,000001 --workers 2
+
+# 跳过大盘复盘，只做个股分析
+python main.py --no-market-review
+python main.py --stocks 600519 --no-market-review
+
+# 不保存分析上下文快照
+python main.py --no-context-snapshot
+python main.py --stocks 600519 --no-context-snapshot
+
+# 强制执行（跳过交易日检查，非交易日也能跑）
+python main.py --force-run
+python main.py --stocks 600519 --force-run
+
+# 组合：指定股票 + 不通知 + 调试
+python main.py --stocks 600519 --no-notify --debug
+
+# 组合：指定股票 + 多线程 + 不通知
+python main.py --stocks 600519,000001,000002 --workers 3 --no-notify
+
+# 组合：强制执行 + 不通知 + 调试
+python main.py --force-run --no-notify --debug
+
+
+================================================================
+三、仅获取数据（dry-run）
+================================================================
+
+# 获取配置文件中所有股票的数据（不做 AI 分析）
+python main.py --dry-run
+
+# 获取指定股票数据
+python main.py --dry-run --stocks 600519
+python main.py --dry-run --stocks 600519,000001
+
+# 调试模式下获取数据
+python main.py --dry-run --debug
+
+# 强制获取（非交易日）
+python main.py --dry-run --force-run
+python main.py --dry-run --stocks 600519 --force-run
+
+
+================================================================
+四、大盘复盘模式
+================================================================
+
+# 仅运行大盘复盘
+python main.py --market-review
+
+# 大盘复盘 + 不发通知
+python main.py --market-review --no-notify
+
+# 大盘复盘 + 调试
+python main.py --market-review --debug
+
+# 大盘复盘 + 强制执行（非交易日）
+python main.py --market-review --force-run
+
+# 大盘复盘 + 不通知 + 强制执行
+python main.py --market-review --no-notify --force-run
+
+
+================================================================
+五、定时任务模式
+================================================================
+
+# 启用定时任务（按配置文件中的时间每日执行）
+python main.py --schedule
+
+# 定时任务 + 启动时不立即执行
+python main.py --schedule --no-run-immediately
+
+# 定时任务 + 指定股票
+python main.py --schedule --stocks 600519,000001
+
+# 定时任务 + 不通知
+python main.py --schedule --no-notify
+
+# 定时任务 + 不通知 + 启动时不立即执行
+python main.py --schedule --no-notify --no-run-immediately
+
+# 定时任务 + 调试
+python main.py --schedule --debug
+
+# 定时任务 + 指定股票 + 不通知 + 不立即执行
+python main.py --schedule --stocks 600519 --no-notify --no-run-immediately
+
+
+================================================================
+六、Web 服务模式
+================================================================
+
+# 启动 FastAPI 服务（同时执行分析）
+python main.py --serve
+python main.py --webui
+
+# 仅启动 FastAPI 服务（不自动执行分析）
+python main.py --serve-only
+python main.py --webui-only
+
+# 自定义端口
+python main.py --serve-only --port 9000
+python main.py --serve-only --host 127.0.0.1 --port 9000
+
+# 服务 + 同时执行分析 + 不通知
+python main.py --serve --no-notify
+
+# 服务 + 同时执行分析 + 指定股票
+python main.py --serve --stocks 600519
+
+# 服务 + 定时任务（服务常驻 + 每日定时分析）
+python main.py --serve --schedule
+
+# 服务 + 定时任务 + 不通知
+python main.py --serve --schedule --no-notify
+
+# 服务 + 定时任务 + 不立即执行
+python main.py --serve --schedule --no-run-immediately
+
+# 服务 + 调试
+python main.py --serve-only --debug
+
+
+================================================================
+七、回测模式
+================================================================
+
+# 对所有历史分析结果运行回测
+python main.py --backtest
+
+# 仅回测指定股票
+python main.py --backtest --backtest-code 600519
+
+# 指定回测评估窗口（交易日数）
+python main.py --backtest --backtest-days 20
+
+# 强制重新计算（忽略已有结果）
+python main.py --backtest --backtest-force
+
+# 指定股票 + 指定窗口 + 强制
+python main.py --backtest --backtest-code 600519 --backtest-days 20 --backtest-force
+
+# 回测 + 调试
+python main.py --backtest --debug
+
+# 回测 + 指定股票 + 调试
+python main.py --backtest --backtest-code 600519 --debug
+
+
+================================================================
+八、单工具执行模式（--tool）
+================================================================
+
+注意：--tool 模式下 --output-format 默认为 json
+
+-------- 数据工具 --------
+
+# 实时行情
+python main.py --tool quote --stocks 600519
+python main.py --tool quote --stocks 600519 --output-format json
+python main.py --tool quote --stocks 600519 --output-format text
+python main.py --tool quote --stocks 600519 --output-format table
+
+# 历史K线（默认60天）
+python main.py --tool history --stocks 600519
+python main.py --tool history --stocks 600519 --days 30
+python main.py --tool history --stocks 600519 --days 120
+python main.py --tool history --stocks 600519 --days 10 --output-format json
+python main.py --tool history --stocks 600519 --days 5 --output-format text
+
+# 筹码分布
+python main.py --tool chip --stocks 600519
+python main.py --tool chip --stocks 600519 --output-format json
+python main.py --tool chip --stocks 600519 --output-format text
+
+# 分析上下文（自动拉取历史数据）
+python main.py --tool context --stocks 600519
+python main.py --tool context --stocks 600519 --output-format json
+python main.py --tool context --stocks 600519 --output-format text
+
+# 股票基本面信息
+python main.py --tool info --stocks 600519
+python main.py --tool info --stocks 600519 --output-format json
+python main.py --tool info --stocks 600519 --output-format text
+python main.py --tool info --stocks 000001 --output-format table
+
+-------- 分析工具 --------
+
+# 技术趋势分析（自动拉取历史数据）
+python main.py --tool trend --stocks 600519
+python main.py --tool trend --stocks 600519 --output-format json
+python main.py --tool trend --stocks 600519 --output-format text
+python main.py --tool trend --stocks 000001 --output-format table
+
+# 均线计算（默认 5,10,20,60，默认120天）
+python main.py --tool ma --stocks 600519
+python main.py --tool ma --stocks 600519 --periods 5,10,20
+python main.py --tool ma --stocks 600519 --periods 5,10,20,60
+python main.py --tool ma --stocks 600519 --periods 5,10,20,60 --days 120
+python main.py --tool ma --stocks 600519 --periods 5,10,20 --days 60 --output-format json
+python main.py --tool ma --stocks 600519 --days 90 --output-format text
+
+# 量能分析（默认30天）
+python main.py --tool volume --stocks 600519
+python main.py --tool volume --stocks 600519 --days 30
+python main.py --tool volume --stocks 600519 --days 60
+python main.py --tool volume --stocks 600519 --days 20 --output-format json
+python main.py --tool volume --stocks 600519 --days 30 --output-format text
+python main.py --tool volume --stocks 000001 --days 30 --output-format table
+
+# 形态识别（默认60天）
+python main.py --tool pattern --stocks 600519
+python main.py --tool pattern --stocks 600519 --days 30
+python main.py --tool pattern --stocks 600519 --days 60
+python main.py --tool pattern --stocks 600519 --days 90 --output-format json
+python main.py --tool pattern --stocks 600519 --days 60 --output-format text
+
+-------- 市场工具 --------
+
+# 市场指数（A股，默认）
+python main.py --tool indices
+python main.py --tool indices --region cn
+python main.py --tool indices --region cn --output-format json
+python main.py --tool indices --region cn --output-format text
+python main.py --tool indices --region cn --output-format table
+
+# 市场指数（美股）
+python main.py --tool indices --region us
+python main.py --tool indices --region us --output-format json
+python main.py --tool indices --region us --output-format text
+
+# 板块排名（默认 top 10）
+python main.py --tool sectors
+python main.py --tool sectors --top-n 10
+python main.py --tool sectors --top-n 5
+python main.py --tool sectors --top-n 20
+python main.py --tool sectors --top-n 10 --output-format json
+python main.py --tool sectors --top-n 10 --output-format text
+python main.py --tool sectors --top-n 5 --output-format table
+
+-------- 搜索工具 --------
+
+# 股票新闻搜索（需要 --name）
+python main.py --tool news --stocks 600519 --name 贵州茅台
+python main.py --tool news --stocks 600519 --name 贵州茅台 --output-format json
+python main.py --tool news --stocks 600519 --name 贵州茅台 --output-format text
+python main.py --tool news --stocks 000001 --name 平安银行 --output-format json
+python main.py --tool news --stocks 000858 --name 五粮液 --output-format json
+
+# 综合情报搜索（需要 --name）
+python main.py --tool intel --stocks 600519 --name 贵州茅台
+python main.py --tool intel --stocks 600519 --name 贵州茅台 --output-format json
+python main.py --tool intel --stocks 600519 --name 贵州茅台 --output-format text
+python main.py --tool intel --stocks 000001 --name 平安银行 --output-format json
+python main.py --tool intel --stocks 000858 --name 五粮液 --output-format json
+
+
+================================================================
+九、组合场景示例
+================================================================
+
+# 场景1：自动化脚本获取行情（JSON 输出，管道处理）
+python main.py --tool quote --stocks 600519 --output-format json
+python main.py --tool quote --stocks 600519 --output-format json | python -c "import sys,json; d=json.load(sys.stdin); print(d.get('price','N/A'))"
+
+# 场景2：批量获取多只股票行情（shell 循环）
+for code in 600519 000001 000858; do
+    python main.py --tool quote --stocks $code --output-format json
+done
+
+# 场景3：先拉数据再做趋势分析
+python main.py --dry-run --stocks 600519
+python main.py --tool trend --stocks 600519 --output-format json
+
+# 场景4：完整分析 + 不通知 + 调试（开发调试用）
+python main.py --stocks 600519 --no-notify --debug
+
+# 场景5：生产部署（服务 + 定时任务 + 不立即执行）
+python main.py --serve --schedule --no-run-immediately
+
+# 场景6：生产部署（仅服务，分析通过 API 触发）
+python main.py --serve-only --host 0.0.0.0 --port 8000
+
+# 场景7：非交易日强制跑一次分析
+python main.py --stocks 600519 --force-run --no-notify
+
+# 场景8：回测 + 服务同时运行
+python main.py --serve --backtest
+
+# 场景9：定时任务 + 单股推送
+python main.py --schedule --single-notify
+
+# 场景10：获取 A股和美股指数对比
+python main.py --tool indices --region cn --output-format json
+python main.py --tool indices --region us --output-format json
+
+# 场景11：完整个股分析工具链（逐步执行）
+python main.py --tool quote   --stocks 600519 --output-format json
+python main.py --tool info    --stocks 600519 --output-format json
+python main.py --tool trend   --stocks 600519 --output-format json
+python main.py --tool ma      --stocks 600519 --periods 5,10,20,60 --output-format json
+python main.py --tool volume  --stocks 600519 --days 30 --output-format json
+python main.py --tool pattern --stocks 600519 --days 60 --output-format json
+python main.py --tool chip    --stocks 600519 --output-format json
+python main.py --tool news    --stocks 600519 --name 贵州茅台 --output-format json
+python main.py --tool intel   --stocks 600519 --name 贵州茅台 --output-format json
+
+
+================================================================
+十、退出码说明
+================================================================
+
+  0   成功
+  1   执行失败（工具返回 error 或程序异常）
+  130 用户中断（Ctrl+C）
+
+
+================================================================
+十一、常见错误
+================================================================
+
+# 错误：news/intel 工具缺少 --name
+python main.py --tool news --stocks 600519
+# 输出: {"error": "Missing required parameter: --name"}
+# 修复: python main.py --tool news --stocks 600519 --name 贵州茅台
+
+# 错误：需要 --stocks 的工具未提供
+python main.py --tool quote
+# 输出: {"error": "Missing required parameter: --stocks"}
+# 修复: python main.py --tool quote --stocks 600519
+
+# 错误：indices/sectors 不需要 --stocks
+python main.py --tool indices --stocks 600519   # --stocks 会被忽略，正常执行
+python main.py --tool sectors                   # 正确用法
+
+
+================================================================
+十二、查看帮助
+================================================================
+
+python main.py --help

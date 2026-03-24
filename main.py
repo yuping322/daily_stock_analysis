@@ -41,6 +41,7 @@ import sys
 import time
 import uuid
 from datetime import datetime, timezone, timedelta
+from pathlib import Path
 from typing import List, Optional, Tuple
 
 from data_provider.base import canonical_stock_code
@@ -484,7 +485,90 @@ def parse_arguments() -> argparse.Namespace:
         help='输出格式（默认 json）'
     )
 
+    output_group = parser.add_mutually_exclusive_group()
+    output_group.add_argument(
+        '--output-file',
+        type=str,
+        help='将结果写入指定文件路径（适用于工具输出或主流程报告）'
+    )
+    output_group.add_argument(
+        '--output-dir',
+        type=str,
+        help='将结果写入指定目录（文件名自动生成或沿用默认报告名）'
+    )
+
     return parser.parse_args()
+
+
+def _write_output_text(output_path: str, content: str) -> str:
+    """Write rendered output to the target file path."""
+    target_path = Path(output_path).expanduser()
+    target_path.parent.mkdir(parents=True, exist_ok=True)
+    target_path.write_text(content, encoding='utf-8')
+    return str(target_path)
+
+
+def _render_tool_result(result: dict, output_format: str) -> str:
+    """Render single-tool result to string according to selected output format."""
+    if output_format == "json":
+        import json
+        import datetime as _dt
+
+        class _DateEncoder(json.JSONEncoder):
+            """JSON encoder that handles date/datetime objects."""
+            def default(self, o):
+                if isinstance(o, (_dt.date, _dt.datetime)):
+                    return o.isoformat()
+                return super().default(o)
+
+        return json.dumps(result, ensure_ascii=False, indent=2, cls=_DateEncoder)
+
+    if output_format == "text":
+        if "error" in result:
+            return f"Error: {result['error']}"
+        return "\n".join(f"{key}: {value}" for key, value in result.items())
+
+    if output_format == "table":
+        try:
+            from tabulate import tabulate
+            if isinstance(result, dict) and not result.get("error"):
+                return tabulate(result.items(), headers=["Field", "Value"], tablefmt="grid")
+            return str(result)
+        except ImportError:
+            logger.warning("tabulate not installed, falling back to text format")
+            return "\n".join(f"{key}: {value}" for key, value in result.items())
+
+    raise ValueError(f"Unsupported output format: {output_format}")
+
+
+def _build_tool_output_path(args: argparse.Namespace) -> Optional[str]:
+    """Resolve output file path for single-tool mode when file output is requested."""
+    if getattr(args, 'output_file', None):
+        return args.output_file
+    if not getattr(args, 'output_dir', None):
+        return None
+
+    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+    suffix = '.json' if args.output_format == 'json' else '.txt'
+    filename = f"{args.tool}_{timestamp}{suffix}"
+    return str(Path(args.output_dir).expanduser() / filename)
+
+
+def _validate_output_options(args: argparse.Namespace, config: Config) -> None:
+    """Validate output options that depend on runtime mode and config."""
+    if not getattr(args, 'output_file', None):
+        return
+
+    if args.tool or args.market_review:
+        return
+
+    if getattr(args, 'no_market_review', False) or not getattr(config, 'market_review_enabled', True):
+        return
+
+    raise ValueError(
+        "--output-file 在当前模式下会同时生成个股报告和大盘复盘，"
+        "请改用 --output-dir，或配合 --no-market-review 仅输出单个文件。"
+    )
 
 
 def _compute_trading_day_filter(
@@ -581,7 +665,9 @@ def run_full_analysis(
             max_workers=args.workers,
             query_id=query_id,
             query_source="cli",
-            save_context_snapshot=save_context_snapshot
+            save_context_snapshot=save_context_snapshot,
+            report_output_dir=getattr(args, 'output_dir', None),
+            report_output_file=getattr(args, 'output_file', None),
         )
 
         # 1. 运行个股分析
@@ -787,6 +873,11 @@ def main() -> int:
 
     # 加载配置（在设置日志前加载，以获取日志目录）
     config = get_config()
+    try:
+        _validate_output_options(args, config)
+    except ValueError as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        return 1
 
     # 配置日志（输出到控制台和文件）
     setup_logging(log_prefix="stock_analysis", debug=args.debug, log_dir=config.log_dir)
@@ -805,42 +896,16 @@ def main() -> int:
         # Execute tool
         result = execute_single_tool(args.tool, args)
         
-        # Output result
         output_format = getattr(args, 'output_format', 'json')
-        
-        if output_format == "json":
-            import json
-            import datetime as _dt
+        rendered_output = _render_tool_result(result, output_format)
+        output_path = _build_tool_output_path(args)
 
-            class _DateEncoder(json.JSONEncoder):
-                """JSON encoder that handles date/datetime objects."""
-                def default(self, o):
-                    if isinstance(o, (_dt.date, _dt.datetime)):
-                        return o.isoformat()
-                    return super().default(o)
+        if output_path:
+            saved_path = _write_output_text(output_path, rendered_output)
+            logger.info(f"工具结果已写入: {saved_path}")
+        else:
+            print(rendered_output)
 
-            print(json.dumps(result, ensure_ascii=False, indent=2, cls=_DateEncoder))
-        elif output_format == "text":
-            # Simple text format
-            if "error" in result:
-                print(f"Error: {result['error']}")
-            else:
-                for key, value in result.items():
-                    print(f"{key}: {value}")
-        elif output_format == "table":
-            # Table format (use tabulate or simple implementation)
-            try:
-                from tabulate import tabulate
-                if isinstance(result, dict) and not result.get("error"):
-                    print(tabulate(result.items(), headers=["Field", "Value"], tablefmt="grid"))
-                else:
-                    print(result)
-            except ImportError:
-                # Fallback to text format
-                logger.warning("tabulate not installed, falling back to text format")
-                for key, value in result.items():
-                    print(f"{key}: {value}")
-        
         return 0 if "error" not in result else 1
 
     # ============================================================
@@ -946,7 +1011,10 @@ def main() -> int:
                     return 0
 
             logger.info("模式: 仅大盘复盘")
-            notifier = NotificationService()
+            notifier = NotificationService(
+                report_output_dir=getattr(args, 'output_dir', None),
+                report_output_file=getattr(args, 'output_file', None),
+            )
 
             # 初始化搜索服务和分析器（如果有配置）
             search_service = None
